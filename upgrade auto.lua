@@ -1,8 +1,6 @@
 --[[
-    DQ Reborn - Auto Upgrader v2
-    - ไม่ต้องเปิด Blacksmith
-    - หยุดอัตโนมัติเมื่อ gold หมด
-    - อัพเร็วสุด
+    DQ Reborn - Auto Upgrader v3 FIXED
+    ใช้ ReplicatedStorage.SSSDSD231/Assets โดยตรง
     Delta compatible
 --]]
 
@@ -14,7 +12,6 @@ local LocalPlayer = Players.LocalPlayer
 local remotes = ReplicatedStorage:WaitForChild("remotes")
 local upgradeRemote = remotes:WaitForChild("upgradeItem")
 
--- // Config
 local Config = {
     AutoUpgrade = false,
     Delay = 0.05,
@@ -23,19 +20,52 @@ local Config = {
     UpgradePhysical = true,
 }
 
+-- // หา Assets folder ของ player
+local function GetAssets()
+    return ReplicatedStorage:FindFirstChild(LocalPlayer.Name .. "/Assets")
+end
+
+-- // หา items ทั้งหมดที่ยัง upgrade ได้
+local function GetUpgradeableItems()
+    local assets = GetAssets()
+    local items = {}
+    if not assets then return items end
+
+    for _, item in pairs(assets:GetChildren()) do
+        local currentUpgrade = item:FindFirstChild("currentUpgrade")
+        local maxUpgrades = item:FindFirstChild("maxUpgrades")
+        local isWeapon = item:FindFirstChild("Weapon")
+        local itemType = item:FindFirstChild("type")
+
+        -- weapon หรือ armor
+        local valid = isWeapon 
+            or (itemType and (itemType.Value == "weapon" or itemType.Value == "armor"))
+
+        if valid and currentUpgrade and maxUpgrades then
+            if currentUpgrade.Value < maxUpgrades.Value then
+                table.insert(items, item)
+            end
+        end
+
+        -- dual weapon (dualRight folder)
+        for _, child in pairs(item:GetChildren()) do
+            local cUpgrade = child:FindFirstChild("currentUpgrade")
+            local mUpgrade = child:FindFirstChild("maxUpgrades")
+            local cWeapon = child:FindFirstChild("Weapon")
+            if cWeapon and cUpgrade and mUpgrade then
+                if cUpgrade.Value < mUpgrade.Value then
+                    table.insert(items, child)
+                end
+            end
+        end
+    end
+    return items
+end
+
 -- // หา gold
 local function GetGold()
-    -- ลองหาใน leaderstats
-    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
-    if leaderstats then
-        local gold = leaderstats:FindFirstChild("Gold")
-            or leaderstats:FindFirstChild("Coins")
-            or leaderstats:FindFirstChild("Money")
-        if gold then return gold.Value end
-    end
-    -- ลองหาใน PlayerValues
     for _, v in pairs(LocalPlayer:GetDescendants()) do
-        if (v.Name:lower():find("gold") or v.Name:lower():find("coin")) 
+        if (v.Name:lower():find("gold") or v.Name:lower():find("coin"))
         and (v:IsA("IntValue") or v:IsA("NumberValue")) then
             return v.Value
         end
@@ -43,128 +73,126 @@ local function GetGold()
     return nil
 end
 
--- // Auto Upgrade Loop
-local upgradeCount = 0
-local function AutoUpgradeLoop(statusLabel, countLabel, goldLabel)
-    while Config.AutoUpgrade do
-        local gold = GetGold()
-
-        -- เช็ค gold
-        if gold ~= nil and gold <= 0 then
-            Config.AutoUpgrade = false
-            statusLabel.Text = "⛔ Gold หมด! หยุดอัพแล้ว"
-            break
-        end
-
-        -- อัพตามสายที่เลือก
-        if Config.UpgradeHealth then
-            pcall(function()
-                upgradeRemote:FireServer("Health")
-                upgradeCount = upgradeCount + 1
-            end)
-            task.wait(Config.Delay)
-        end
-
-        if Config.UpgradeSpell then
-            pcall(function()
-                upgradeRemote:FireServer("Spell")
-                upgradeCount = upgradeCount + 1
-            end)
-            task.wait(Config.Delay)
-        end
-
-        if Config.UpgradePhysical then
-            pcall(function()
-                upgradeRemote:FireServer("Physical")
-                upgradeCount = upgradeCount + 1
-            end)
-            task.wait(Config.Delay)
-        end
-
-        -- update labels
-        countLabel.Text = "Upgrades: " .. upgradeCount
-        if gold then
-            goldLabel.Text = "Gold: " .. tostring(gold):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
-        else
-            goldLabel.Text = "Gold: ?"
-        end
-    end
-end
-
 -- // GUI
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AutoUpgraderV2"
+ScreenGui.Name = "AutoUpgraderV3"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local Frame = Instance.new("Frame")
-Frame.Size = UDim2.new(0, 260, 0, 400)
-Frame.Position = UDim2.new(0, 10, 0.5, -200)
+Frame.Size = UDim2.new(0, 270, 0, 420)
+Frame.Position = UDim2.new(0, 10, 0.5, -210)
 Frame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
 Frame.BorderSizePixel = 0
 Frame.Parent = ScreenGui
 Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 10)
 
--- Title
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 36)
-Title.BackgroundColor3 = Color3.fromRGB(200, 80, 140)
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.Text = "Auto Upgrader v2"
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 13
-Title.Parent = Frame
-Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 10)
+-- Title + Minimize
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 36)
+TitleBar.BackgroundColor3 = Color3.fromRGB(200, 80, 140)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = Frame
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 10)
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(1, -40, 1, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.Text = "Auto Upgrader v3"
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 13
+TitleLabel.Parent = TitleBar
+
+-- Minimize button
+local MinBtn = Instance.new("TextButton")
+MinBtn.Size = UDim2.new(0, 30, 0, 26)
+MinBtn.Position = UDim2.new(1, -34, 0, 5)
+MinBtn.BackgroundColor3 = Color3.fromRGB(150, 40, 100)
+MinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinBtn.Text = "—"
+MinBtn.Font = Enum.Font.GothamBold
+MinBtn.TextSize = 14
+MinBtn.Parent = TitleBar
+Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
+
+-- Content frame
+local Content = Instance.new("Frame")
+Content.Size = UDim2.new(1, 0, 1, -36)
+Content.Position = UDim2.new(0, 0, 0, 36)
+Content.BackgroundTransparency = 1
+Content.Parent = Frame
+
+local isMinimized = false
+MinBtn.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    Content.Visible = not isMinimized
+    Frame.Size = isMinimized 
+        and UDim2.new(0, 270, 0, 36) 
+        or UDim2.new(0, 270, 0, 420)
+    MinBtn.Text = isMinimized and "+" or "—"
+end)
 
 -- Status
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, -10, 0, 20)
-StatusLabel.Position = UDim2.new(0, 5, 0, 40)
+StatusLabel.Position = UDim2.new(0, 5, 0, 4)
 StatusLabel.BackgroundTransparency = 1
 StatusLabel.TextColor3 = Color3.fromRGB(120, 120, 120)
 StatusLabel.Text = "Ready!"
 StatusLabel.Font = Enum.Font.Gotham
 StatusLabel.TextSize = 11
 StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.Parent = Frame
+StatusLabel.Parent = Content
 
--- Gold label
+-- Gold
 local GoldLabel = Instance.new("TextLabel")
 GoldLabel.Size = UDim2.new(1, -10, 0, 20)
-GoldLabel.Position = UDim2.new(0, 5, 0, 58)
+GoldLabel.Position = UDim2.new(0, 5, 0, 22)
 GoldLabel.BackgroundTransparency = 1
 GoldLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
 GoldLabel.Text = "Gold: ?"
 GoldLabel.Font = Enum.Font.GothamBold
 GoldLabel.TextSize = 11
 GoldLabel.TextXAlignment = Enum.TextXAlignment.Left
-GoldLabel.Parent = Frame
+GoldLabel.Parent = Content
 
--- Count label
+-- Count
 local CountLabel = Instance.new("TextLabel")
 CountLabel.Size = UDim2.new(1, -10, 0, 20)
-CountLabel.Position = UDim2.new(0, 5, 0, 76)
+CountLabel.Position = UDim2.new(0, 5, 0, 40)
 CountLabel.BackgroundTransparency = 1
 CountLabel.TextColor3 = Color3.fromRGB(200, 80, 140)
 CountLabel.Text = "Upgrades: 0"
 CountLabel.Font = Enum.Font.GothamBold
 CountLabel.TextSize = 11
 CountLabel.TextXAlignment = Enum.TextXAlignment.Left
-CountLabel.Parent = Frame
+CountLabel.Parent = Content
+
+-- Items found
+local ItemsLabel = Instance.new("TextLabel")
+ItemsLabel.Size = UDim2.new(1, -10, 0, 20)
+ItemsLabel.Position = UDim2.new(0, 5, 0, 58)
+ItemsLabel.BackgroundTransparency = 1
+ItemsLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
+ItemsLabel.Text = "Items: scanning..."
+ItemsLabel.Font = Enum.Font.Gotham
+ItemsLabel.TextSize = 11
+ItemsLabel.TextXAlignment = Enum.TextXAlignment.Left
+ItemsLabel.Parent = Content
 
 -- Section
 local sectionLabel = Instance.new("TextLabel")
 sectionLabel.Size = UDim2.new(1, -10, 0, 20)
-sectionLabel.Position = UDim2.new(0, 5, 0, 100)
+sectionLabel.Position = UDim2.new(0, 5, 0, 82)
 sectionLabel.BackgroundTransparency = 1
 sectionLabel.TextColor3 = Color3.fromRGB(200, 80, 140)
 sectionLabel.Text = "เลือกสายที่อัพ:"
 sectionLabel.Font = Enum.Font.GothamBold
 sectionLabel.TextSize = 12
 sectionLabel.TextXAlignment = Enum.TextXAlignment.Left
-sectionLabel.Parent = Frame
+sectionLabel.Parent = Content
 
--- Toggle factory
 local function CreateToggle(name, configKey, color, yPos)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(1, -10, 0, 36)
@@ -174,41 +202,40 @@ local function CreateToggle(name, configKey, color, yPos)
     btn.Text = (Config[configKey] and "✅ " or "❌ ") .. name
     btn.Font = Enum.Font.GothamBold
     btn.TextSize = 13
-    btn.Parent = Frame
+    btn.Parent = Content
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
     btn.MouseButton1Click:Connect(function()
         Config[configKey] = not Config[configKey]
         btn.Text = (Config[configKey] and "✅ " or "❌ ") .. name
         btn.BackgroundColor3 = Config[configKey] and color or Color3.fromRGB(35, 35, 35)
     end)
-    return btn
 end
 
-CreateToggle("🟢 Health", "UpgradeHealth", Color3.fromRGB(60, 180, 60), 124)
-CreateToggle("🟣 Spell", "UpgradeSpell", Color3.fromRGB(120, 60, 200), 166)
-CreateToggle("🔴 Physical", "UpgradePhysical", Color3.fromRGB(200, 60, 60), 208)
+CreateToggle("🟢 Health", "UpgradeHealth", Color3.fromRGB(60, 180, 60), 106)
+CreateToggle("🟣 Spell", "UpgradeSpell", Color3.fromRGB(120, 60, 200), 148)
+CreateToggle("🔴 Physical", "UpgradePhysical", Color3.fromRGB(200, 60, 60), 190)
 
 -- Delay
 local delayLabel = Instance.new("TextLabel")
 delayLabel.Size = UDim2.new(1, -10, 0, 20)
-delayLabel.Position = UDim2.new(0, 5, 0, 252)
+delayLabel.Position = UDim2.new(0, 5, 0, 234)
 delayLabel.BackgroundTransparency = 1
 delayLabel.TextColor3 = Color3.fromRGB(160, 160, 160)
 delayLabel.Text = "Delay (s): 0.05"
 delayLabel.Font = Enum.Font.Gotham
 delayLabel.TextSize = 11
 delayLabel.TextXAlignment = Enum.TextXAlignment.Left
-delayLabel.Parent = Frame
+delayLabel.Parent = Content
 
 local delayBox = Instance.new("TextBox")
 delayBox.Size = UDim2.new(1, -10, 0, 26)
-delayBox.Position = UDim2.new(0, 5, 0, 274)
+delayBox.Position = UDim2.new(0, 5, 0, 256)
 delayBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 delayBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 delayBox.Text = "0.05"
 delayBox.Font = Enum.Font.Gotham
 delayBox.TextSize = 12
-delayBox.Parent = Frame
+delayBox.Parent = Content
 Instance.new("UICorner", delayBox).CornerRadius = UDim.new(0, 6)
 
 delayBox.FocusLost:Connect(function()
@@ -222,22 +249,83 @@ end)
 -- Main Toggle
 local mainToggle = Instance.new("TextButton")
 mainToggle.Size = UDim2.new(1, -10, 0, 44)
-mainToggle.Position = UDim2.new(0, 5, 0, 314)
+mainToggle.Position = UDim2.new(0, 5, 0, 296)
 mainToggle.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 mainToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
 mainToggle.Text = "[ OFF ]  Auto Upgrade"
 mainToggle.Font = Enum.Font.GothamBold
 mainToggle.TextSize = 14
-mainToggle.Parent = Frame
+mainToggle.Parent = Content
 Instance.new("UICorner", mainToggle).CornerRadius = UDim.new(0, 6)
 
--- Gold check on start
+-- // Auto Upgrade Loop
+local upgradeCount = 0
+local function AutoUpgradeLoop()
+    while Config.AutoUpgrade do
+        local gold = GetGold()
+        if gold ~= nil and gold <= 0 then
+            Config.AutoUpgrade = false
+            StatusLabel.Text = "⛔ Gold หมด!"
+            mainToggle.Text = "[ OFF ]  Auto Upgrade"
+            mainToggle.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+            break
+        end
+
+        local items = GetUpgradeableItems()
+        ItemsLabel.Text = "Items: " .. #items .. " upgradeable"
+
+        if #items == 0 then
+            StatusLabel.Text = "✅ ทุก item อัพ max แล้ว!"
+            Config.AutoUpgrade = false
+            mainToggle.Text = "[ OFF ]  Auto Upgrade"
+            mainToggle.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+            break
+        end
+
+        for _, item in pairs(items) do
+            if not Config.AutoUpgrade then break end
+
+            -- ลอง args แบบต่างๆ
+            if Config.UpgradeHealth then
+                pcall(function()
+                    upgradeRemote:FireServer(item, "Health")
+                    upgradeCount = upgradeCount + 1
+                end)
+                task.wait(Config.Delay)
+            end
+            if Config.UpgradeSpell then
+                pcall(function()
+                    upgradeRemote:FireServer(item, "Spell")
+                    upgradeCount = upgradeCount + 1
+                end)
+                task.wait(Config.Delay)
+            end
+            if Config.UpgradePhysical then
+                pcall(function()
+                    upgradeRemote:FireServer(item, "Physical")
+                    upgradeCount = upgradeCount + 1
+                end)
+                task.wait(Config.Delay)
+            end
+        end
+
+        CountLabel.Text = "Upgrades: " .. upgradeCount
+        if gold then
+            GoldLabel.Text = "Gold: " .. tostring(math.floor(gold)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+        end
+        task.wait(0.1)
+    end
+end
+
+-- Gold updater
 task.spawn(function()
     while true do
         local gold = GetGold()
         if gold then
-            GoldLabel.Text = "Gold: " .. tostring(gold):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,","")
+            GoldLabel.Text = "Gold: " .. tostring(math.floor(gold)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
         end
+        local items = GetUpgradeableItems()
+        ItemsLabel.Text = "Items: " .. #items .. " upgradeable"
         task.wait(1)
     end
 end)
@@ -250,15 +338,13 @@ mainToggle.MouseButton1Click:Connect(function()
         or Color3.fromRGB(35, 35, 35)
     StatusLabel.Text = Config.AutoUpgrade and "⚡ Upgrading..." or "Stopped"
     if Config.AutoUpgrade then
-        task.spawn(function()
-            AutoUpgradeLoop(StatusLabel, CountLabel, GoldLabel)
-        end)
+        task.spawn(AutoUpgradeLoop)
     end
 end)
 
 -- Draggable
 local dragging, dragInput, dragStart, startPos
-Frame.InputBegan:Connect(function(input)
+TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         dragging = true
         dragStart = input.Position
@@ -270,7 +356,7 @@ Frame.InputBegan:Connect(function(input)
         end)
     end
 end)
-Frame.InputChanged:Connect(function(input)
+TitleBar.InputChanged:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseMovement then
         dragInput = input
     end
@@ -285,4 +371,4 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
-print("[DQ Reborn] Auto Upgrader v2 loaded ✓")
+print("[DQ Reborn] Auto Upgrader v3 loaded ✓")
