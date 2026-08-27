@@ -1,7 +1,7 @@
 --[[
-    DQ Reborn - Kill Aura v4 FINAL
-    Uses real swing remote from dump
-    Target: Workspace.[Player].[Weapon].swing
+    DQ Reborn - Kill Aura v5
+    Fixed: หา swing remote จาก Workspace โดยตรง
+    Delta compatible
 --]]
 
 local Players = game:GetService("Players")
@@ -23,38 +23,38 @@ local Config = {
     Delay = 0.05,
 }
 
--- // หา swing remote ของ player เอง
+-- // หา swing remote จาก Workspace.PlayerName
 local function GetSwingRemote()
-    local char = LocalPlayer.Character
-    if not char then return nil end
-    for _, tool in pairs(char:GetChildren()) do
-        if tool:IsA("Tool") then
-            local swing = tool:FindFirstChild("swing")
+    -- หาใน Workspace.SSSDSD231 ตรงๆ
+    local playerFolder = workspace:FindFirstChild(LocalPlayer.Name)
+    if playerFolder then
+        for _, child in pairs(playerFolder:GetChildren()) do
+            local swing = child:FindFirstChild("swing", true)
             if swing and swing:IsA("RemoteEvent") then
                 return swing
             end
-            -- dual weapon
-            local dual = tool:FindFirstChild("dualRight")
-            if dual then
-                local dswing = dual:FindFirstChild("swing")
-                if dswing then return dswing end
-            end
         end
     end
-    -- check backpack
-    for _, tool in pairs(LocalPlayer.Backpack:GetChildren()) do
-        if tool:IsA("Tool") then
-            local swing = tool:FindFirstChild("swing")
-            if swing then return swing end
+    -- fallback: หาใน Character
+    if Character then
+        for _, child in pairs(Character:GetChildren()) do
+            local swing = child:FindFirstChild("swing", true)
+            if swing and swing:IsA("RemoteEvent") then
+                return swing
+            end
         end
     end
     return nil
 end
 
--- // หา ability remote
+-- // หา abilityCast
 local function GetAbilityRemote()
-    return game:GetService("ReplicatedStorage"):FindFirstChild("remotes")
-        and game:GetService("ReplicatedStorage").remotes:FindFirstChild("abilityCast")
+    local rs = game:GetService("ReplicatedStorage")
+    local remotes = rs:FindFirstChild("remotes")
+    if remotes then
+        return remotes:FindFirstChild("abilityCast")
+    end
+    return nil
 end
 
 -- // Kill Aura Loop
@@ -75,13 +75,16 @@ local function KillAuraLoop()
                     if mobHuman.Health > 0 then
                         local dist = (HumanoidRootPart.Position - mobHRP.Position).Magnitude
                         if dist <= Config.Range then
-                            -- ยิง swing remote
+                            -- tp ไปใกล้ mob
+                            HumanoidRootPart.CFrame = mobHRP.CFrame * CFrame.new(0, 0, -3)
+                            task.wait(0.05)
+                            -- swing
                             if swingRemote then
                                 pcall(function()
                                     swingRemote:FireServer()
                                 end)
                             end
-                            -- ยิง abilityCast
+                            -- ability
                             if abilityRemote then
                                 pcall(function()
                                     abilityRemote:FireServer()
@@ -98,7 +101,7 @@ end
 
 -- // GUI
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "KillAuraV4"
+ScreenGui.Name = "KillAuraV5"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -114,25 +117,23 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, 0, 0, 36)
 Title.BackgroundColor3 = Color3.fromRGB(200, 80, 140)
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.Text = "Kill Aura v4 FINAL"
+Title.Text = "Kill Aura v5"
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 13
 Title.Parent = Frame
 Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 10)
 
--- Remote Status
 local RemoteStatus = Instance.new("TextLabel")
 RemoteStatus.Size = UDim2.new(1, -10, 0, 20)
 RemoteStatus.Position = UDim2.new(0, 5, 0, 40)
 RemoteStatus.BackgroundTransparency = 1
 RemoteStatus.TextColor3 = Color3.fromRGB(120, 120, 120)
-RemoteStatus.Text = "Checking remotes..."
+RemoteStatus.Text = "Checking..."
 RemoteStatus.Font = Enum.Font.Gotham
 RemoteStatus.TextSize = 10
 RemoteStatus.TextXAlignment = Enum.TextXAlignment.Left
 RemoteStatus.Parent = Frame
 
--- Toggle
 local Toggle = Instance.new("TextButton")
 Toggle.Size = UDim2.new(1, -10, 0, 34)
 Toggle.Position = UDim2.new(0, 5, 0, 64)
@@ -144,7 +145,6 @@ Toggle.TextSize = 13
 Toggle.Parent = Frame
 Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0, 6)
 
--- Range Label
 local RangeLabel = Instance.new("TextLabel")
 RangeLabel.Size = UDim2.new(1, -10, 0, 20)
 RangeLabel.Position = UDim2.new(0, 5, 0, 104)
@@ -156,7 +156,6 @@ RangeLabel.TextSize = 11
 RangeLabel.TextXAlignment = Enum.TextXAlignment.Left
 RangeLabel.Parent = Frame
 
--- Range Box
 local RangeBox = Instance.new("TextBox")
 RangeBox.Size = UDim2.new(1, -10, 0, 26)
 RangeBox.Position = UDim2.new(0, 5, 0, 126)
@@ -176,7 +175,6 @@ RangeBox.FocusLost:Connect(function()
     end
 end)
 
--- Kill Label
 local KillLabel = Instance.new("TextLabel")
 KillLabel.Size = UDim2.new(1, -10, 0, 20)
 KillLabel.Position = UDim2.new(0, 5, 0, 160)
@@ -205,17 +203,13 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Check remotes on start
+-- check remotes
 task.delay(1, function()
     local swing = GetSwingRemote()
     local ability = GetAbilityRemote()
-    local status = ""
-    status = status .. (swing and "✅ swing " or "❌ swing ")
-    status = status .. (ability and "✅ ability" or "❌ ability")
-    RemoteStatus.Text = status
+    RemoteStatus.Text = (swing and "✅" or "❌") .. " swing | " .. (ability and "✅" or "❌") .. " ability"
 end)
 
--- Toggle Logic
 Toggle.MouseButton1Click:Connect(function()
     Config.KillAura = not Config.KillAura
     Toggle.Text = (Config.KillAura and "[ ON ]   " or "[ OFF ]  ") .. "Kill Aura"
@@ -256,4 +250,4 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
-print("[DQ Reborn] Kill Aura v4 FINAL loaded ✓")
+print("[DQ Reborn] Kill Aura v5 loaded ✓")
