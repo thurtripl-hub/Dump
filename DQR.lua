@@ -1,374 +1,249 @@
 --[[
-    DQ Reborn - Auto Upgrader v3 FIXED
-    ใช้ ReplicatedStorage.SSSDSD231/Assets โดยตรง
-    Delta compatible
---]]
+    DQR Pro Script | Part 1: Auto Dungeon Enter
+    by ENI x LO ☕
+    Remote source: ReplicatedStorage dump verified
+]]
 
-local Players = game:GetService("Players")
+-- ================================================
+-- CORE SERVICES
+-- ================================================
+local Players       = game:GetService("Players")
+local RunService    = game:GetService("RunService")
+local TweenService  = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
 
-local LocalPlayer = Players.LocalPlayer
-local remotes = ReplicatedStorage:WaitForChild("remotes")
-local upgradeRemote = remotes:WaitForChild("upgradeItem")
-
-local Config = {
-    AutoUpgrade = false,
-    Delay = 0.05,
-    UpgradeHealth = true,
-    UpgradeSpell = true,
-    UpgradePhysical = true,
-}
-
--- // หา Assets folder ของ player
-local function GetAssets()
-    return ReplicatedStorage:FindFirstChild(LocalPlayer.Name .. "/Assets")
+local LP = Players.LocalPlayer
+local function getChar() return LP.Character end
+local function getRoot()
+    local c = getChar()
+    return c and c:FindFirstChild("HumanoidRootPart")
 end
 
--- // หา items ทั้งหมดที่ยัง upgrade ได้
-local function GetUpgradeableItems()
-    local assets = GetAssets()
-    local items = {}
-    if not assets then return items end
+-- ================================================
+-- REMOTE REFERENCES (verified from dump)
+-- ================================================
+local Remotes = {}
 
-    for _, item in pairs(assets:GetChildren()) do
-        local currentUpgrade = item:FindFirstChild("currentUpgrade")
-        local maxUpgrades = item:FindFirstChild("maxUpgrades")
-        local isWeapon = item:FindFirstChild("Weapon")
-        local itemType = item:FindFirstChild("type")
-
-        -- weapon หรือ armor
-        local valid = isWeapon 
-            or (itemType and (itemType.Value == "weapon" or itemType.Value == "armor"))
-
-        if valid and currentUpgrade and maxUpgrades then
-            if currentUpgrade.Value < maxUpgrades.Value then
-                table.insert(items, item)
-            end
-        end
-
-        -- dual weapon (dualRight folder)
-        for _, child in pairs(item:GetChildren()) do
-            local cUpgrade = child:FindFirstChild("currentUpgrade")
-            local mUpgrade = child:FindFirstChild("maxUpgrades")
-            local cWeapon = child:FindFirstChild("Weapon")
-            if cWeapon and cUpgrade and mUpgrade then
-                if cUpgrade.Value < mUpgrade.Value then
-                    table.insert(items, child)
-                end
-            end
+local function getRemote(name, rtype)
+    local r = ReplicatedStorage:FindFirstChild(name, true)
+    if r and r:IsA(rtype) then
+        Remotes[name] = r
+        return r
+    end
+    -- deep search fallback
+    for _, v in pairs(ReplicatedStorage:GetDescendants()) do
+        if v.Name == name and v:IsA(rtype) then
+            Remotes[name] = v
+            return v
         end
     end
-    return items
-end
-
--- // หา gold
-local function GetGold()
-    for _, v in pairs(LocalPlayer:GetDescendants()) do
-        if (v.Name:lower():find("gold") or v.Name:lower():find("coin"))
-        and (v:IsA("IntValue") or v:IsA("NumberValue")) then
-            return v.Value
-        end
-    end
+    warn("[DQR Pro] Remote not found: " .. name)
     return nil
 end
 
--- // GUI
+-- Pre-cache remotes
+local joinDungeon        = getRemote("joinDungeon", "RemoteFunction")
+local startDungeon       = getRemote("startDungeon", "RemoteEvent")
+local readyUp            = getRemote("readyUp", "RemoteEvent")
+local replayDungeon      = getRemote("replayDungeon", "RemoteEvent")
+local returnToLobby      = getRemote("ReturnToLobbyEvent", "RemoteEvent")
+local getDungeonStats    = getRemote("getDungeonStats", "RemoteFunction")
+local teleportRemote     = getRemote("Teleport", "RemoteFunction")
+
+-- ================================================
+-- STATE
+-- ================================================
+local State = {
+    AutoDungeon  = false,
+    TargetDungeon = nil,    -- จะ set หลังจากรู้ชื่อ dungeon
+    Status = "Idle",
+}
+
+-- ================================================
+-- GUI — PART 1
+-- ================================================
+pcall(function()
+    if game.CoreGui:FindFirstChild("DQRPro") then
+        game.CoreGui.DQRPro:Destroy()
+    end
+end)
+
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AutoUpgraderV3"
+ScreenGui.Name = "DQRPro"
 ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = game.CoreGui
 
-local Frame = Instance.new("Frame")
-Frame.Size = UDim2.new(0, 270, 0, 420)
-Frame.Position = UDim2.new(0, 10, 0.5, -210)
-Frame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
-Frame.BorderSizePixel = 0
-Frame.Parent = ScreenGui
-Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 10)
+-- Main frame
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.Size = UDim2.new(0, 300, 0, 200)
+Main.Position = UDim2.new(0, 20, 0.5, -100)
+Main.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+Main.BorderSizePixel = 0
+Main.Active = true
+Main.Draggable = true
+Main.Parent = ScreenGui
 
--- Title + Minimize
-local TitleBar = Instance.new("Frame")
-TitleBar.Size = UDim2.new(1, 0, 0, 36)
-TitleBar.BackgroundColor3 = Color3.fromRGB(200, 80, 140)
-TitleBar.BorderSizePixel = 0
-TitleBar.Parent = Frame
-Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 10)
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 10)
 
-local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(1, -40, 1, 0)
-TitleLabel.BackgroundTransparency = 1
-TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-TitleLabel.Text = "Auto Upgrader v3"
-TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.TextSize = 13
-TitleLabel.Parent = TitleBar
+-- Title
+local Title = Instance.new("Frame")
+Title.Size = UDim2.new(1, 0, 0, 36)
+Title.BackgroundColor3 = Color3.fromRGB(88, 44, 160)
+Title.BorderSizePixel = 0
+Title.Parent = Main
+Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 10)
 
--- Minimize button
-local MinBtn = Instance.new("TextButton")
-MinBtn.Size = UDim2.new(0, 30, 0, 26)
-MinBtn.Position = UDim2.new(1, -34, 0, 5)
-MinBtn.BackgroundColor3 = Color3.fromRGB(150, 40, 100)
-MinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-MinBtn.Text = "—"
-MinBtn.Font = Enum.Font.GothamBold
-MinBtn.TextSize = 14
-MinBtn.Parent = TitleBar
-Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
+local TitleLbl = Instance.new("TextLabel")
+TitleLbl.Size = UDim2.new(1, -10, 1, 0)
+TitleLbl.Position = UDim2.new(0, 10, 0, 0)
+TitleLbl.BackgroundTransparency = 1
+TitleLbl.Text = "⚔ DQR Pro  |  Part 1"
+TitleLbl.TextColor3 = Color3.white
+TitleLbl.TextSize = 13
+TitleLbl.Font = Enum.Font.GothamBold
+TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
+TitleLbl.Parent = Title
 
--- Content frame
-local Content = Instance.new("Frame")
-Content.Size = UDim2.new(1, 0, 1, -36)
-Content.Position = UDim2.new(0, 0, 0, 36)
-Content.BackgroundTransparency = 1
-Content.Parent = Frame
+-- Status label
+local StatusLbl = Instance.new("TextLabel")
+StatusLbl.Size = UDim2.new(1, -20, 0, 24)
+StatusLbl.Position = UDim2.new(0, 10, 0, 44)
+StatusLbl.BackgroundTransparency = 1
+StatusLbl.Text = "Status: Idle"
+StatusLbl.TextColor3 = Color3.fromRGB(160, 160, 180)
+StatusLbl.TextSize = 12
+StatusLbl.Font = Enum.Font.Gotham
+StatusLbl.TextXAlignment = Enum.TextXAlignment.Left
+StatusLbl.Parent = Main
 
-local isMinimized = false
-MinBtn.MouseButton1Click:Connect(function()
-    isMinimized = not isMinimized
-    Content.Visible = not isMinimized
-    Frame.Size = isMinimized 
-        and UDim2.new(0, 270, 0, 36) 
-        or UDim2.new(0, 270, 0, 420)
-    MinBtn.Text = isMinimized and "+" or "—"
-end)
+local function setStatus(msg)
+    State.Status = msg
+    StatusLbl.Text = "Status: " .. msg
+end
 
--- Status
-local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, -10, 0, 20)
-StatusLabel.Position = UDim2.new(0, 5, 0, 4)
-StatusLabel.BackgroundTransparency = 1
-StatusLabel.TextColor3 = Color3.fromRGB(120, 120, 120)
-StatusLabel.Text = "Ready!"
-StatusLabel.Font = Enum.Font.Gotham
-StatusLabel.TextSize = 11
-StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.Parent = Content
+-- Toggle builder
+local function makeToggle(parent, label, yPos, callback)
+    local Row = Instance.new("Frame")
+    Row.Size = UDim2.new(1, -20, 0, 34)
+    Row.Position = UDim2.new(0, 10, 0, yPos)
+    Row.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    Row.BorderSizePixel = 0
+    Row.Parent = parent
+    Instance.new("UICorner", Row).CornerRadius = UDim.new(0, 8)
 
--- Gold
-local GoldLabel = Instance.new("TextLabel")
-GoldLabel.Size = UDim2.new(1, -10, 0, 20)
-GoldLabel.Position = UDim2.new(0, 5, 0, 22)
-GoldLabel.BackgroundTransparency = 1
-GoldLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
-GoldLabel.Text = "Gold: ?"
-GoldLabel.Font = Enum.Font.GothamBold
-GoldLabel.TextSize = 11
-GoldLabel.TextXAlignment = Enum.TextXAlignment.Left
-GoldLabel.Parent = Content
+    local Lbl = Instance.new("TextLabel")
+    Lbl.Size = UDim2.new(1, -55, 1, 0)
+    Lbl.Position = UDim2.new(0, 10, 0, 0)
+    Lbl.BackgroundTransparency = 1
+    Lbl.Text = label
+    Lbl.TextColor3 = Color3.fromRGB(210, 210, 230)
+    Lbl.TextSize = 12
+    Lbl.Font = Enum.Font.Gotham
+    Lbl.TextXAlignment = Enum.TextXAlignment.Left
+    Lbl.Parent = Row
 
--- Count
-local CountLabel = Instance.new("TextLabel")
-CountLabel.Size = UDim2.new(1, -10, 0, 20)
-CountLabel.Position = UDim2.new(0, 5, 0, 40)
-CountLabel.BackgroundTransparency = 1
-CountLabel.TextColor3 = Color3.fromRGB(200, 80, 140)
-CountLabel.Text = "Upgrades: 0"
-CountLabel.Font = Enum.Font.GothamBold
-CountLabel.TextSize = 11
-CountLabel.TextXAlignment = Enum.TextXAlignment.Left
-CountLabel.Parent = Content
+    local Btn = Instance.new("TextButton")
+    Btn.Size = UDim2.new(0, 42, 0, 22)
+    Btn.Position = UDim2.new(1, -50, 0.5, -11)
+    Btn.BackgroundColor3 = Color3.fromRGB(55, 55, 75)
+    Btn.Text = "OFF"
+    Btn.TextColor3 = Color3.white
+    Btn.TextSize = 11
+    Btn.Font = Enum.Font.GothamBold
+    Btn.Parent = Row
+    Instance.new("UICorner", Btn).CornerRadius = UDim.new(0, 6)
 
--- Items found
-local ItemsLabel = Instance.new("TextLabel")
-ItemsLabel.Size = UDim2.new(1, -10, 0, 20)
-ItemsLabel.Position = UDim2.new(0, 5, 0, 58)
-ItemsLabel.BackgroundTransparency = 1
-ItemsLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
-ItemsLabel.Text = "Items: scanning..."
-ItemsLabel.Font = Enum.Font.Gotham
-ItemsLabel.TextSize = 11
-ItemsLabel.TextXAlignment = Enum.TextXAlignment.Left
-ItemsLabel.Parent = Content
-
--- Section
-local sectionLabel = Instance.new("TextLabel")
-sectionLabel.Size = UDim2.new(1, -10, 0, 20)
-sectionLabel.Position = UDim2.new(0, 5, 0, 82)
-sectionLabel.BackgroundTransparency = 1
-sectionLabel.TextColor3 = Color3.fromRGB(200, 80, 140)
-sectionLabel.Text = "เลือกสายที่อัพ:"
-sectionLabel.Font = Enum.Font.GothamBold
-sectionLabel.TextSize = 12
-sectionLabel.TextXAlignment = Enum.TextXAlignment.Left
-sectionLabel.Parent = Content
-
-local function CreateToggle(name, configKey, color, yPos)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -10, 0, 36)
-    btn.Position = UDim2.new(0, 5, 0, yPos)
-    btn.BackgroundColor3 = Config[configKey] and color or Color3.fromRGB(35, 35, 35)
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.Text = (Config[configKey] and "✅ " or "❌ ") .. name
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 13
-    btn.Parent = Content
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-    btn.MouseButton1Click:Connect(function()
-        Config[configKey] = not Config[configKey]
-        btn.Text = (Config[configKey] and "✅ " or "❌ ") .. name
-        btn.BackgroundColor3 = Config[configKey] and color or Color3.fromRGB(35, 35, 35)
+    local on = false
+    Btn.MouseButton1Click:Connect(function()
+        on = not on
+        Btn.Text = on and "ON" or "OFF"
+        TweenService:Create(Btn, TweenInfo.new(0.15), {
+            BackgroundColor3 = on
+                and Color3.fromRGB(88, 44, 160)
+                or  Color3.fromRGB(55, 55, 75)
+        }):Play()
+        callback(on)
     end)
+
+    return Btn
 end
 
-CreateToggle("🟢 Health", "UpgradeHealth", Color3.fromRGB(60, 180, 60), 106)
-CreateToggle("🟣 Spell", "UpgradeSpell", Color3.fromRGB(120, 60, 200), 148)
-CreateToggle("🔴 Physical", "UpgradePhysical", Color3.fromRGB(200, 60, 60), 190)
-
--- Delay
-local delayLabel = Instance.new("TextLabel")
-delayLabel.Size = UDim2.new(1, -10, 0, 20)
-delayLabel.Position = UDim2.new(0, 5, 0, 234)
-delayLabel.BackgroundTransparency = 1
-delayLabel.TextColor3 = Color3.fromRGB(160, 160, 160)
-delayLabel.Text = "Delay (s): 0.05"
-delayLabel.Font = Enum.Font.Gotham
-delayLabel.TextSize = 11
-delayLabel.TextXAlignment = Enum.TextXAlignment.Left
-delayLabel.Parent = Content
-
-local delayBox = Instance.new("TextBox")
-delayBox.Size = UDim2.new(1, -10, 0, 26)
-delayBox.Position = UDim2.new(0, 5, 0, 256)
-delayBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-delayBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-delayBox.Text = "0.05"
-delayBox.Font = Enum.Font.Gotham
-delayBox.TextSize = 12
-delayBox.Parent = Content
-Instance.new("UICorner", delayBox).CornerRadius = UDim.new(0, 6)
-
-delayBox.FocusLost:Connect(function()
-    local val = tonumber(delayBox.Text)
-    if val then
-        Config.Delay = math.clamp(val, 0.05, 5)
-        delayLabel.Text = "Delay (s): " .. Config.Delay
-    end
+-- Toggles
+makeToggle(Main, "🚪  Auto Enter Dungeon", 76, function(on)
+    State.AutoDungeon = on
+    setStatus(on and "Auto Dungeon: ON" or "Idle")
 end)
 
--- Main Toggle
-local mainToggle = Instance.new("TextButton")
-mainToggle.Size = UDim2.new(1, -10, 0, 44)
-mainToggle.Position = UDim2.new(0, 5, 0, 296)
-mainToggle.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-mainToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-mainToggle.Text = "[ OFF ]  Auto Upgrade"
-mainToggle.Font = Enum.Font.GothamBold
-mainToggle.TextSize = 14
-mainToggle.Parent = Content
-Instance.new("UICorner", mainToggle).CornerRadius = UDim.new(0, 6)
+makeToggle(Main, "🔁  Auto Ready Up", 118, function(on)
+    State.AutoReady = on
+end)
 
--- // Auto Upgrade Loop
-local upgradeCount = 0
-local function AutoUpgradeLoop()
-    while Config.AutoUpgrade do
-        local gold = GetGold()
-        if gold ~= nil and gold <= 0 then
-            Config.AutoUpgrade = false
-            StatusLabel.Text = "⛔ Gold หมด!"
-            mainToggle.Text = "[ OFF ]  Auto Upgrade"
-            mainToggle.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-            break
-        end
+makeToggle(Main, "♻️  Auto Replay", 160, function(on)
+    State.AutoReplay = on
+end)
 
-        local items = GetUpgradeableItems()
-        ItemsLabel.Text = "Items: " .. #items .. " upgradeable"
+-- ================================================
+-- LOGIC: AUTO DUNGEON ENTER
+-- ================================================
+local function tryJoinDungeon()
+    if not joinDungeon then
+        warn("[DQR Pro] joinDungeon remote not found")
+        return
+    end
 
-        if #items == 0 then
-            StatusLabel.Text = "✅ ทุก item อัพ max แล้ว!"
-            Config.AutoUpgrade = false
-            mainToggle.Text = "[ OFF ]  Auto Upgrade"
-            mainToggle.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-            break
-        end
+    setStatus("Joining dungeon...")
+    local ok, result = pcall(function()
+        return joinDungeon:InvokeServer(State.TargetDungeon)
+    end)
 
-        for _, item in pairs(items) do
-            if not Config.AutoUpgrade then break end
-
-            -- ลอง args แบบต่างๆ
-            if Config.UpgradeHealth then
-                pcall(function()
-                    upgradeRemote:FireServer(item, "Health")
-                    upgradeCount = upgradeCount + 1
-                end)
-                task.wait(Config.Delay)
-            end
-            if Config.UpgradeSpell then
-                pcall(function()
-                    upgradeRemote:FireServer(item, "Spell")
-                    upgradeCount = upgradeCount + 1
-                end)
-                task.wait(Config.Delay)
-            end
-            if Config.UpgradePhysical then
-                pcall(function()
-                    upgradeRemote:FireServer(item, "Physical")
-                    upgradeCount = upgradeCount + 1
-                end)
-                task.wait(Config.Delay)
-            end
-        end
-
-        CountLabel.Text = "Upgrades: " .. upgradeCount
-        if gold then
-            GoldLabel.Text = "Gold: " .. tostring(math.floor(gold)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
-        end
-        task.wait(0.1)
+    if ok then
+        setStatus("Joined! ✅")
+        print("[DQR Pro] joinDungeon result:", result)
+    else
+        setStatus("Join failed — retrying...")
+        warn("[DQR Pro] joinDungeon error:", result)
     end
 end
 
--- Gold updater
-task.spawn(function()
-    while true do
-        local gold = GetGold()
-        if gold then
-            GoldLabel.Text = "Gold: " .. tostring(math.floor(gold)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
-        end
-        local items = GetUpgradeableItems()
-        ItemsLabel.Text = "Items: " .. #items .. " upgradeable"
-        task.wait(1)
+local function tryReadyUp()
+    if not readyUp then return end
+    pcall(function() readyUp:FireServer() end)
+    setStatus("Ready! ✅")
+end
+
+local function tryReplay()
+    if not replayDungeon then return end
+    pcall(function() replayDungeon:FireServer() end)
+    setStatus("Replaying...")
+end
+
+-- ================================================
+-- MAIN LOOP
+-- ================================================
+local lastAction = 0
+
+RunService.Heartbeat:Connect(function()
+    local now = tick()
+    if now - lastAction < 3 then return end -- cooldown 3 วิ
+    lastAction = now
+
+    if State.AutoDungeon then
+        tryJoinDungeon()
+    end
+
+    if State.AutoReady then
+        tryReadyUp()
+    end
+
+    if State.AutoReplay then
+        tryReplay()
     end
 end)
 
-mainToggle.MouseButton1Click:Connect(function()
-    Config.AutoUpgrade = not Config.AutoUpgrade
-    mainToggle.Text = (Config.AutoUpgrade and "[ ON ]   " or "[ OFF ]  ") .. "Auto Upgrade"
-    mainToggle.BackgroundColor3 = Config.AutoUpgrade
-        and Color3.fromRGB(200, 80, 140)
-        or Color3.fromRGB(35, 35, 35)
-    StatusLabel.Text = Config.AutoUpgrade and "⚡ Upgrading..." or "Stopped"
-    if Config.AutoUpgrade then
-        task.spawn(AutoUpgradeLoop)
-    end
-end)
-
--- Draggable
-local dragging, dragInput, dragStart, startPos
-TitleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPos = Frame.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
-    end
-end)
-TitleBar.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement then
-        dragInput = input
-    end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        local delta = input.Position - dragStart
-        Frame.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y
-        )
-    end
-end)
-
-print("[DQ Reborn] Auto Upgrader v3 loaded ✓")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print(" DQR Pro | Part 1 loaded ✅")
+print(" ► Auto Dungeon Enter ready")
+print(" ► Part 2: Kill Aura + Auto Ability (next)")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
